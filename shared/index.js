@@ -12,3 +12,4 @@ export {
     getTaskId,
 } from "./config-loader.js";
 export { safeAct, slugify, pad, sleep, randomDelay, banner } from "./utils.js";
+export { uploadScreenshot, insertScanResult, fetchScanResults } from "./supabase.js";

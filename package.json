@@ -4,11 +4,13 @@
     "description": "Multi-insurance provider listing scanner — screenshots & data extraction",
     "type": "module",
     "scripts": {
-        "blueshield": "node insurances/blueshield/index.js"
+        "blueshield": "node insurances/blueshield/index.js",
+        "report": "npm run dev --prefix report"
     },
     "dependencies": {
         "@ai-sdk/google": "^3.0.43",
         "@browserbasehq/stagehand": "^3.0.0",
+        "@supabase/supabase-js": "^2.99.1",
         "dotenv": "^16.6.1",
         "puppeteer": "^24.39.0",
         "puppeteer-extra": "^3.3.6",

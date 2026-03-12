@@ -21,12 +21,17 @@ import {
     ensureOutputDirs,
     loadConfig,
     getTaskId,
+    getInsurance,
     safeAct,
     sleep,
     randomDelay,
     pad,
     banner,
+    uploadScreenshot,
+    insertScanResult,
 } from "../../shared/index.js";
+
+import { slugify } from "../../shared/utils.js";
 
 import {
     setLocation,
@@ -228,26 +233,84 @@ async function main() {
                         console.log(`   🚫 Still blocked after attempt ${attempt + 1}`);
                     }
 
+                    // Resolve insurance name for the result
+                    const insurance = getInsurance(config, INSURANCE_ID);
+                    const insuranceName = insurance ? insurance.name : INSURANCE_ID;
+
                     if (searchResult.blocked) {
                         console.log(`   ❌ All ${MAX_RETRIES} retries exhausted for "${prov.name}" — skipping`);
-                        results.push({
+                        const blockedResult = {
                             name: prov.name,
                             specialty: "N/A",
                             address: "N/A",
                             phone: "N/A",
                             acceptingNewPatients: false,
+                            status: "blocked",
                             locationId: loc.id,
                             locationName: loc.name,
+                            taskId,
+                        };
+                        results.push(blockedResult);
+                        await insertScanResult({
+                            insuranceId: INSURANCE_ID,
+                            insuranceName,
+                            providerId: prov.id,
+                            providerName: prov.name,
+                            providerType: prov.type || "",
+                            locationId: loc.id,
+                            locationName: loc.name,
+                            status: "blocked",
                             taskId,
                         });
                         providerCounter++;
                         continue;
                     }
 
+                    // ── Provider NOT found in search results → skip screenshot ──
+                    if (!searchResult.found) {
+                        console.log(`   ⏭️ Skipping screenshot — provider not listed`);
+                        const notFoundResult = {
+                            name: prov.name,
+                            specialty: "N/A",
+                            address: "N/A",
+                            phone: "N/A",
+                            acceptingNewPatients: false,
+                            status: "not_found",
+                            locationId: loc.id,
+                            locationName: loc.name,
+                            taskId,
+                        };
+                        results.push(notFoundResult);
+                        await insertScanResult({
+                            insuranceId: INSURANCE_ID,
+                            insuranceName,
+                            providerId: prov.id,
+                            providerName: prov.name,
+                            providerType: prov.type || "",
+                            locationId: loc.id,
+                            locationName: loc.name,
+                            status: "not_found",
+                            taskId,
+                        });
+                        console.log(`   ✅ Done with ${prov.name} @ ${loc.name} (not found)`);
+                        providerCounter++;
+                        // Shorter cooldown for not-found (no heavy page interaction)
+                        if (pi < providers.length - 1) {
+                            await randomDelay(30_000, 60_000, "⏳ Short cooldown (not found)");
+                        }
+                        continue;
+                    }
+
+                    // ── Provider FOUND → open detail, screenshot, extract ──
                     await openProviderDetail(page, stagehand, prov.name);
 
                     // Screenshot
-                    await captureScreenshot(page, OUTPUT_DIR, loc.id, prov.name);
+                    const localScreenshotPath = await captureScreenshot(page, OUTPUT_DIR, loc.id, prov.name);
+
+                    // Upload screenshot to Supabase Storage
+                    const provSlug = slugify(prov.name);
+                    const storagePath = `${INSURANCE_ID}/${loc.id}/${provSlug}.png`;
+                    const screenshotUrl = await uploadScreenshot(localScreenshotPath, storagePath);
 
                     // Scroll up for extraction
                     await page.evaluate(() => window.scrollTo(0, 0));
@@ -255,10 +318,29 @@ async function main() {
 
                     // Extract data
                     const data = await extractProviderData(stagehand, prov.name);
-                    results.push({
+                    const foundResult = {
                         ...data,
+                        status: "found",
+                        screenshotUrl,
                         locationId: loc.id,
                         locationName: loc.name,
+                        taskId,
+                    };
+                    results.push(foundResult);
+                    await insertScanResult({
+                        insuranceId: INSURANCE_ID,
+                        insuranceName,
+                        providerId: prov.id,
+                        providerName: prov.name,
+                        providerType: prov.type || "",
+                        locationId: loc.id,
+                        locationName: loc.name,
+                        status: "found",
+                        specialty: data.specialty,
+                        address: data.address,
+                        phone: data.phone,
+                        acceptingNewPatients: data.acceptingNewPatients,
+                        screenshotUrl,
                         taskId,
                     });
 
@@ -267,14 +349,29 @@ async function main() {
                     console.log(
                         `   ⚠️ Error: ${(err.message || "").substring(0, 80)}`,
                     );
-                    results.push({
+                    const errorResult = {
                         name: prov.name,
                         specialty: "N/A",
                         address: "N/A",
                         phone: "N/A",
                         acceptingNewPatients: false,
+                        status: "error",
                         locationId: loc.id,
                         locationName: loc.name,
+                        taskId,
+                    };
+                    results.push(errorResult);
+
+                    const insurance = getInsurance(config, INSURANCE_ID);
+                    await insertScanResult({
+                        insuranceId: INSURANCE_ID,
+                        insuranceName: insurance ? insurance.name : INSURANCE_ID,
+                        providerId: prov.id,
+                        providerName: prov.name,
+                        providerType: prov.type || "",
+                        locationId: loc.id,
+                        locationName: loc.name,
+                        status: "error",
                         taskId,
                     });
                 }

@@ -188,10 +188,22 @@ export async function searchProvider(page, stagehand, providerName) {
     );
     if (blocked) {
         console.log("   🚫 Search blocked — site returned rate-limit error");
-        return { blocked: true };
+        return { blocked: true, found: false };
     }
 
-    return { blocked: false };
+    // Check if the provider actually appears in the search results
+    const found = await page.evaluate((name) => {
+        const nameParts = name.toLowerCase().split(" ");
+        const bodyText = document.body.innerText.toLowerCase();
+        // Check if all parts of the provider name appear on the page
+        return nameParts.every((part) => bodyText.includes(part));
+    }, providerName);
+
+    if (!found) {
+        console.log(`   ❌ Provider "${providerName}" not found in search results`);
+    }
+
+    return { blocked: false, found };
 }
 
 /* ─── Detail page ───────────────────────────────────────────────── */
