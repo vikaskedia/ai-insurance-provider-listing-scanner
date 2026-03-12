@@ -137,6 +137,8 @@ export async function selectPlan(page, stagehand) {
 
 /**
  * Type a provider name in the search box and click the dropdown match.
+ * @returns {{ blocked: boolean }} – `blocked` is true when the site
+ *   returns "aren't able to complete your search" (rate-limit).
  */
 export async function searchProvider(page, stagehand, providerName) {
     console.log("   🔍 Typing provider name...");
@@ -180,15 +182,16 @@ export async function searchProvider(page, stagehand, providerName) {
 
     await sleep(6000);
 
-    // Check for errors
-    const hasError = await page.evaluate(() =>
+    // Check for rate-limit / block error
+    const blocked = await page.evaluate(() =>
         document.body.innerText.includes("aren't able to complete"),
     );
-    if (hasError) {
-        console.log("   ⚠️ Search returned error — trying submit button...");
-        await safeAct(stagehand, "Click the search button to submit", "Submit search");
-        await sleep(5000);
+    if (blocked) {
+        console.log("   🚫 Search blocked — site returned rate-limit error");
+        return { blocked: true };
     }
+
+    return { blocked: false };
 }
 
 /* ─── Detail page ───────────────────────────────────────────────── */

@@ -23,6 +23,7 @@ import {
     getTaskId,
     safeAct,
     sleep,
+    randomDelay,
     pad,
     banner,
 } from "../../shared/index.js";
@@ -39,6 +40,9 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const OUTPUT_DIR = join(__dirname, "output");
 const INSURANCE_ID = "blueshield";
 const FAD_URL = "https://www.blueshieldca.com/fad/home";
+
+/* ─── Anti-bot tuning ──────────────────────────────────────────── */
+const BATCH_SIZE = 5;   // restart browser every N providers
 
 /* ─── CLI args ─────────────────────────────────────────────────── */
 
@@ -86,27 +90,25 @@ async function main() {
     // Ensure output dirs
     ensureOutputDirs(OUTPUT_DIR, locations);
 
-    // Launch browser
-    console.log("🚀 Launching Chrome with stealth plugin...");
+    /* ─── Browser launch helper (reused on session rotation) ───── */
     const userDataDir = join(__dirname, "user_data");
-    const { browser, page: puppeteerPage } = await launchBrowser({
-        userDataDir,
-        geolocation: { latitude: 34.052996, longitude: -118.2548551 },
-        permissions: ["geolocation"],
-        permissionOrigin: "https://www.blueshieldca.com",
-    });
 
-    const wsEndpoint = browser.wsEndpoint();
-    console.log(`   ✅ Chrome launched (ws: ${wsEndpoint.substring(0, 40)}...)`);
+    async function startSession() {
+        console.log("\n🚀 Launching Chrome with stealth plugin...");
+        const { browser, page: puppeteerPage } = await launchBrowser({
+            userDataDir,
+            geolocation: { latitude: 34.052996, longitude: -118.2548551 },
+            permissions: ["geolocation"],
+            permissionOrigin: "https://www.blueshieldca.com",
+        });
 
-    // Connect Stagehand
-    console.log("🤖 Connecting Stagehand to browser...");
-    const { stagehand, page } = await connectStagehand(wsEndpoint);
-    console.log("   ✅ Stagehand connected");
+        const wsEndpoint = browser.wsEndpoint();
+        console.log(`   ✅ Chrome launched (ws: ${wsEndpoint.substring(0, 40)}...)`);
 
-    const results = [];
+        console.log("🤖 Connecting Stagehand to browser...");
+        const { stagehand, page } = await connectStagehand(wsEndpoint);
+        console.log("   ✅ Stagehand connected");
 
-    try {
         // Navigate to FAD and dismiss cookie banner
         console.log("\n🌐 Navigating to Blue Shield FAD page...");
         await page.goto(FAD_URL, {
@@ -123,6 +125,18 @@ async function main() {
             "Dismiss cookie banner",
         );
         await sleep(3000);
+
+        return { browser, stagehand, page };
+    }
+
+    const results = [];
+    let session = await startSession();
+    let browser = session.browser;
+    let stagehand = session.stagehand;
+    let page = session.page;
+    let providerCounter = 0;   // tracks providers in current batch
+
+    try {
 
         // ─── Outer loop: locations ────────────────────────────────
         for (let li = 0; li < locations.length; li++) {
@@ -142,20 +156,94 @@ async function main() {
                     `\n   [${pi + 1}/${providers.length}] ${prov.name}  (task: ${taskId})`,
                 );
 
+                // ── Session rotation: restart browser every BATCH_SIZE providers ──
+                if (providerCounter >= BATCH_SIZE) {
+                    console.log(`\n🔄 Restarting browser (batch of ${BATCH_SIZE} done)...`);
+
+                    // Tear down old session (best-effort)
+                    try { await stagehand.close(); } catch (_) { }
+                    try { await browser.close(); } catch (_) { }
+                    await sleep(2000);  // let OS release resources
+
+                    await randomDelay(240_000, 300_000, "Break before new session");
+
+                    // Start fresh session
+                    session = await startSession();
+                    browser = session.browser;
+                    stagehand = session.stagehand;
+                    page = session.page;
+                    providerCounter = 0;
+                }
+
                 try {
-                    // Navigate to FAD home
-                    if (li > 0 || pi > 0) {
+                    // Navigate to FAD home (skip only on the very first provider
+                    // of a fresh session — startSession already navigated there)
+                    if (providerCounter > 0) {
                         await page.goto(FAD_URL, {
                             waitUntil: "domcontentloaded",
                             timeout: 45000,
                         });
-                        await sleep(4000);
+                        await randomDelay(4_000, 8_000, "Page load settle");
                     }
 
-                    // Set location + plan + search
-                    await setLocation(page, stagehand, loc.zip);
-                    await selectPlan(page, stagehand);
-                    await searchProvider(page, stagehand, prov.name);
+                    // Set location + plan + search (with retry on rate-limit)
+                    const MAX_RETRIES = 3;
+                    let searchResult = { blocked: false };
+                    let attempt = 0;
+
+                    for (attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+                        if (attempt > 0) {
+                            console.log(`   🔁 Retry ${attempt}/${MAX_RETRIES} for "${prov.name}"...`);
+
+                            // After first retry failure → restart browser entirely
+                            if (attempt >= 2) {
+                                console.log(`   🔄 Restarting browser to clear rate-limit...`);
+                                try { await stagehand.close(); } catch (_) { }
+                                try { await browser.close(); } catch (_) { }
+                                await sleep(2000);
+                                await randomDelay(60_000, 120_000, "⏳ Long cooldown before fresh session");
+
+                                session = await startSession();
+                                browser = session.browser;
+                                stagehand = session.stagehand;
+                                page = session.page;
+                                providerCounter = 0;
+                            } else {
+                                // First retry — just wait and reload the page
+                                await randomDelay(60_000, 90_000, "⏳ Waiting for rate-limit to clear");
+                                await page.goto(FAD_URL, {
+                                    waitUntil: "domcontentloaded",
+                                    timeout: 45000,
+                                });
+                                await sleep(5000);
+                            }
+                        }
+
+                        await setLocation(page, stagehand, loc.zip);
+                        await selectPlan(page, stagehand);
+                        searchResult = await searchProvider(page, stagehand, prov.name);
+
+                        if (!searchResult.blocked) break;
+
+                        console.log(`   🚫 Still blocked after attempt ${attempt + 1}`);
+                    }
+
+                    if (searchResult.blocked) {
+                        console.log(`   ❌ All ${MAX_RETRIES} retries exhausted for "${prov.name}" — skipping`);
+                        results.push({
+                            name: prov.name,
+                            specialty: "N/A",
+                            address: "N/A",
+                            phone: "N/A",
+                            acceptingNewPatients: false,
+                            locationId: loc.id,
+                            locationName: loc.name,
+                            taskId,
+                        });
+                        providerCounter++;
+                        continue;
+                    }
+
                     await openProviderDetail(page, stagehand, prov.name);
 
                     // Screenshot
@@ -189,6 +277,13 @@ async function main() {
                         locationName: loc.name,
                         taskId,
                     });
+                }
+
+                providerCounter++;
+
+                // ── Cooldown between providers (60–90s to avoid rate-limit) ──
+                if (pi < providers.length - 1) {
+                    await randomDelay(120_000, 150_000, "⏳ Cooldown before next provider");
                 }
             }
         }
@@ -232,8 +327,8 @@ async function main() {
             `${results.length} results across ${locations.length} locations`,
         ]);
     } finally {
-        await stagehand.close();
-        await browser.close();
+        try { await stagehand.close(); } catch (_) { }
+        try { await browser.close(); } catch (_) { }
     }
 }
 

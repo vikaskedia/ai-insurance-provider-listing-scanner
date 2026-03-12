@@ -44,6 +44,19 @@ export function sleep(ms) {
 }
 
 /**
+ * Sleep for a random duration between minMs and maxMs.
+ * Logs the wait time so progress is visible in the console.
+ * @param {number} minMs – minimum milliseconds
+ * @param {number} maxMs – maximum milliseconds
+ * @param {string} [label] – optional label for the log line
+ */
+export async function randomDelay(minMs, maxMs, label = "Cooling down") {
+    const ms = Math.floor(Math.random() * (maxMs - minMs + 1)) + minMs;
+    console.log(`   ☕ ${label} for ${(ms / 1000).toFixed(1)}s...`);
+    await sleep(ms);
+}
+
+/**
  * Print a boxed banner to stdout.
  * @param {string[]} lines
  */

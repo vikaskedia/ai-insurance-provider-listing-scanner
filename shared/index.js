@@ -11,4 +11,4 @@ export {
     getTasksForInsurance,
     getTaskId,
 } from "./config-loader.js";
-export { safeAct, slugify, pad, sleep, banner } from "./utils.js";
+export { safeAct, slugify, pad, sleep, randomDelay, banner } from "./utils.js";
