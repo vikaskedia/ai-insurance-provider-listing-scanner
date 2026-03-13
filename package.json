@@ -5,12 +5,14 @@
     "type": "module",
     "scripts": {
         "blueshield": "node insurances/blueshield/index.js",
-        "report": "npm run dev --prefix report"
+        "report": "npm run dev --prefix report",
+        "ai-review": "node scripts/ai-review.js"
     },
     "dependencies": {
         "@ai-sdk/google": "^3.0.43",
         "@browserbasehq/stagehand": "^3.0.0",
         "@supabase/supabase-js": "^2.99.1",
+        "ai": "^6.0.116",
         "dotenv": "^16.6.1",
         "puppeteer": "^24.39.0",
         "puppeteer-extra": "^3.3.6",

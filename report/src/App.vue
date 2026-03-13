@@ -35,6 +35,17 @@
             <el-option label="Blocked" value="blocked" />
             <el-option label="Error" value="error" />
           </el-select>
+          <el-date-picker
+            v-model="filters.dateRange"
+            type="daterange"
+            size="small"
+            range-separator="–"
+            start-placeholder="From"
+            end-placeholder="To"
+            style="width: 220px"
+            value-format="YYYY-MM-DD"
+            @change="applyFilters"
+          />
           <el-button size="small" text @click="clearFilters" v-if="hasActiveFilters">✕ Clear</el-button>
         </div>
         <div class="toolbar-right">
@@ -70,14 +81,14 @@
       <!-- Data Table -->
       <div v-else class="table-wrap">
         <el-table
-          :data="filteredResults"
+          :data="paginatedResults"
           size="small"
           stripe
           style="width: 100%"
           :default-sort="{ prop: 'scanned_at', order: 'descending' }"
           @sort-change="handleSort"
           :header-cell-style="{ background: 'rgba(255,255,255,0.02)', color: '#64748b', fontSize: '11px', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.5px', padding: '8px 12px' }"
-          :cell-style="{ padding: '6px 12px' }"
+          :cell-style="{ padding: '6px 4px' }"
         >
           <!-- # -->
           <el-table-column type="index" width="40" label="#" />
@@ -126,6 +137,46 @@
             </template>
           </el-table-column>
 
+          <!-- AI Review -->
+          <el-table-column label="AI Review" width="120" align="center">
+            <template #default="{ row }">
+              <template v-if="row.ai_reviewed && row.ai_suggestion">
+                <span :class="['ai-status-chip', aiChipClass(row.ai_suggestion)]">
+                  {{ aiStatusIcon(row.ai_suggestion) }} {{ aiStatusLabel(row.ai_suggestion) }}
+                </span>
+              </template>
+              <span v-else-if="row.status === 'found'" class="ai-badge pending">⏳ Pending</span>
+              <span v-else class="muted">—</span>
+            </template>
+          </el-table-column>
+
+          <!-- AI Suggestion -->
+          <el-table-column label="AI Suggestion" min-width="300">
+            <template #default="{ row }">
+              <template v-if="row.ai_suggestion">
+                <el-popover placement="left" :width="440" trigger="click">
+                  <template #reference>
+                    <div class="ai-suggestion-preview">
+                      <span class="ai-suggestion-summary">{{ aiSummaryLine(row.ai_suggestion) }}</span>
+                      <span class="ai-read-more">read more →</span>
+                    </div>
+                  </template>
+                  <div class="ai-popover-card">
+                    <div class="ai-popover-header">
+                      <span :class="['ai-status-chip', aiChipClass(row.ai_suggestion)]">
+                        {{ aiStatusIcon(row.ai_suggestion) }} {{ aiStatusLabel(row.ai_suggestion) }}
+                      </span>
+                      <span class="ai-popover-provider">{{ row.provider_name }}</span>
+                    </div>
+                    <div class="ai-popover-body" v-html="formatSuggestion(row.ai_suggestion)"></div>
+                  </div>
+                </el-popover>
+              </template>
+              <span v-else class="muted">—</span>
+            </template>
+          </el-table-column>
+
+
           <!-- Date -->
           <el-table-column prop="scanned_at" label="Scanned" sortable="custom" width="130" align="right">
             <template #default="{ row }">
@@ -133,6 +184,16 @@
             </template>
           </el-table-column>
         </el-table>
+        <div class="pagination-bar">
+          <el-pagination
+            v-model:current-page="currentPage"
+            :page-size="pageSize"
+            :total="filteredResults.length"
+            layout="prev, pager, next, total"
+            background
+            small
+          />
+        </div>
       </div>
     </main>
 
@@ -155,9 +216,11 @@ import { View, Download, Refresh, Loading } from '@element-plus/icons-vue'
 
 const allResults = ref([])
 const filteredResults = ref([])
+const currentPage = ref(1)
+const pageSize = 20
 const loading = ref(true)
 const error = ref(null)
-const filters = reactive({ insurance: '', provider: '', location: '', status: '' })
+const filters = reactive({ insurance: '', provider: '', location: '', status: '', dateRange: null })
 const modal = reactive({ visible: false, provider: '', location: '', insurance: '', url: '', row: null })
 
 const stats = computed(() => {
@@ -176,7 +239,12 @@ const filterOptions = computed(() => ({
   locations: [...new Set(allResults.value.map(r => r.location_name).filter(Boolean))].sort(),
 }))
 
-const hasActiveFilters = computed(() => Object.values(filters).some(Boolean))
+const hasActiveFilters = computed(() => filters.insurance || filters.provider || filters.location || filters.status || filters.dateRange)
+
+const paginatedResults = computed(() => {
+  const start = (currentPage.value - 1) * pageSize
+  return filteredResults.value.slice(start, start + pageSize)
+})
 
 const headerSubtitle = computed(() => {
   if (loading.value) return 'Loading…'
@@ -193,15 +261,21 @@ async function loadData() {
 }
 
 function applyFilters() {
-  filteredResults.value = allResults.value.filter(r =>
-    (!filters.insurance || r.insurance_name === filters.insurance) &&
-    (!filters.provider || r.provider_name === filters.provider) &&
-    (!filters.location || r.location_name === filters.location) &&
-    (!filters.status || r.status === filters.status)
-  )
+  filteredResults.value = allResults.value.filter(r => {
+    if (filters.insurance && r.insurance_name !== filters.insurance) return false
+    if (filters.provider && r.provider_name !== filters.provider) return false
+    if (filters.location && r.location_name !== filters.location) return false
+    if (filters.status && r.status !== filters.status) return false
+    if (filters.dateRange && filters.dateRange.length === 2) {
+      const scanned = r.scanned_at ? r.scanned_at.substring(0, 10) : ''
+      if (scanned < filters.dateRange[0] || scanned > filters.dateRange[1]) return false
+    }
+    return true
+  })
+  currentPage.value = 1
 }
 
-function clearFilters() { Object.assign(filters, { insurance: '', provider: '', location: '', status: '' }); applyFilters() }
+function clearFilters() { Object.assign(filters, { insurance: '', provider: '', location: '', status: '', dateRange: null }); applyFilters() }
 
 function handleSort({ prop, order }) {
   if (!prop || !order) { applyFilters(); return }
@@ -216,6 +290,44 @@ function handleSort({ prop, order }) {
 const statusMap = { found: 'Found', not_found: 'Not Found', blocked: 'Blocked', error: 'Error' }
 function formatStatus(s) { return statusMap[s] || s || '?' }
 function formatDate(d) { return d ? new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '—' }
+
+// ─── AI Suggestion Helpers ───────────────────────
+function aiStatusIcon(text) {
+  if (text.includes('✅')) return '✅'
+  if (text.includes('⚠️')) return '⚠️'
+  if (text.includes('❌')) return '❌'
+  return '🤖'
+}
+
+function aiStatusLabel(text) {
+  if (text.includes('✅')) return 'Good'
+  if (text.includes('⚠️')) return 'Attention'
+  if (text.includes('❌')) return 'Issues'
+  return 'Reviewed'
+}
+
+function aiChipClass(text) {
+  if (text.includes('✅')) return 'chip-good'
+  if (text.includes('⚠️')) return 'chip-warn'
+  if (text.includes('❌')) return 'chip-bad'
+  return 'chip-default'
+}
+
+function aiSummaryLine(text) {
+  // Extract the **Summary**: line content
+  const match = text.match(/\*\*Summary\*\*:\s*(.+)/i)
+  if (match) return match[1].trim().substring(0, 120)
+  // Fallback: second non-empty line or first 120 chars
+  const lines = text.split('\n').filter(l => l.trim())
+  return (lines[1] || lines[0] || text).replace(/\*\*/g, '').trim().substring(0, 120)
+}
+
+function formatSuggestion(text) {
+  return text
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+    .replace(/\n/g, '<br>')
+}
 
 function openScreenshot(row) {
   Object.assign(modal, { visible: true, provider: row.provider_name, location: row.location_name, insurance: row.insurance_name, url: row.screenshot_url, row })
