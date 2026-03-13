@@ -29,21 +29,30 @@ const REVIEW_PROMPT = `You are an insurance provider listing quality reviewer.
 
 You are given a screenshot from an insurance company's "Find a Doctor" directory page showing a provider's listing details.
 
-Analyze the screenshot and verify whether the provider listing looks correct and complete. Check for:
+Analyze the screenshot and verify ONLY the following 5 items:
 
-1. **Provider Name** — Is the name clearly displayed?
+1. **Contact Details** — Check if the following are present and correct:
+   - Address (complete practice address)
+   - Phone number
+   - Fax number
+   - Email addresses: support@savantcare, finance@savantcare, credentialing@savantcare
 2. **Specialty** — Is the medical specialty listed?
-3. **Address** — Is a complete practice address shown?
-4. **Phone Number** — Is a phone number visible?
-5. **Accepting New Patients** — Is there an indicator for whether they accept new patients?
-6. **Network Status** — Is their network/plan participation clear?
-7. **Overall Listing Quality** — Does the listing look professional and complete?
+3. **Provider Language** — Are the languages spoken by the provider listed?
+4. **Accepting New Patients** — Is there an indicator for whether they accept new patients?
+5. **Education** — Is the provider's education/training information listed?
 
-Respond with a concise assessment in this format:
+For each of the 5 items above, report whether it is ✅ Present, ⚠️ Partially present, or ❌ Missing/Not found.
 
-**Status**: ✅ Listing looks correct / ⚠️ Needs attention / ❌ Issues found
-**Summary**: One-line summary of the listing quality.
-**Details**: Brief list of what's present and any issues or improvements needed.
+Respond in this format:
+
+**Status**: ✅ All items present / ⚠️ Some items need attention / ❌ Issues found
+**Summary**: One-line summary.
+**Details**:
+- Contact Details: [status and what's present/missing]
+- Specialty: [status]
+- Provider Language: [status]
+- Accepting New Patients: [status]
+- Education: [status]
 
 Keep your response under 200 words. Be specific and actionable.`;
 
