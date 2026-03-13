@@ -57,6 +57,16 @@ function parseArgs() {
     return opts;
 }
 
+// ─── Comment HTML builder ────────────────────────────
+function buildCommentHtml(screenshotUrl, suggestion) {
+    // Convert markdown bold (**text**) to <strong> and newlines to <br>
+    const htmlSuggestion = suggestion
+        .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+        .replace(/\n/g, '<br>');
+
+    return `<table style="width:100%;border-collapse:collapse;"><tr><td style="width:50%;vertical-align:top;padding:8px;"><a href="${screenshotUrl}" target="_blank" rel="noopener noreferrer"><img src="${screenshotUrl}" style="max-width:120px;border-radius:4px;" /></a></td><td style="width:50%;vertical-align:top;padding:8px;">${htmlSuggestion}</td></tr></table>`;
+}
+
 // ─── Main ────────────────────────────────────────────
 async function main() {
     const opts = parseArgs();
@@ -67,7 +77,7 @@ async function main() {
     // 1. Fetch unreviewed rows
     const { data: rows, error: fetchErr } = await supabase
         .from("scan_results")
-        .select("id, provider_name, location_name, insurance_name, screenshot_url")
+        .select("id, provider_name, location_name, insurance_name, screenshot_url, task_id")
         .eq("status", "found")
         .eq("ai_reviewed", false)
         .not("screenshot_url", "is", null)
@@ -130,6 +140,29 @@ async function main() {
             } else {
                 console.log(`   ✅ Saved`);
                 reviewed++;
+
+                // 4. Post AI suggestion as a comment on the related task
+                if (row.task_id) {
+                    try {
+                        const commentContent = buildCommentHtml(row.screenshot_url, suggestion);
+                        const { error: commentErr } = await supabase
+                            .from("task_comments")
+                            .insert({
+                                task_id: row.task_id,
+                                user_id: "e00f039d-4f21-4a35-ae58-b6114f02e01b",
+                                content: commentContent,
+                                workspace_id: 309,
+                            });
+
+                        if (commentErr) {
+                            console.log(`   ⚠️ Comment post failed: ${commentErr.message}`);
+                        } else {
+                            console.log(`   💬 Comment posted on task`);
+                        }
+                    } catch (commentEx) {
+                        console.log(`   ⚠️ Comment error: ${(commentEx.message || "").substring(0, 80)}`);
+                    }
+                }
             }
         } catch (err) {
             console.log(`   ❌ AI error: ${(err.message || "").substring(0, 100)}`);
